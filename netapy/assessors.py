@@ -60,7 +60,7 @@ class NetascoreAssessor(Assessor):
   def naming_config(self, value):
     self._naming_config = value
 
-  def run(self, network, print_output = False, **config):
+  def run(self, network, **config):
     return self.generate_index(network, **config)
 
   def generate_index(self, network, overwrite = True, overwrite_subs = True,
