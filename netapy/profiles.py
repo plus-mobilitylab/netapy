@@ -3,6 +3,7 @@ import yaml
 
 from abc import abstractmethod
 from collections import OrderedDict
+from collections.abc import MutableMapping
 
 from netapy import utils
 from netapy.exceptions import NetapyProfileError
@@ -10,14 +11,44 @@ from netapy.exceptions import NetapyProfileError
 
 class Profile(dict):
 
-  def __init__(self, obj = None, name = None, validate = False):
-    dict_obj = {} if obj is None else obj
-    super(Profile, self).__init__(dict_obj)
+  def __init__(self, obj = None, name = None, validate = False, parse = False):
+    super(Profile, self).__init__({} if obj is None else obj)
     self.name = name
-    self._obj = dict_obj
-    self._is_valid = None
+    self._parsed = None
     if validate:
       self.validate()
+    if parse:
+      self.parse()
+
+  def __setitem__(self, key, value):
+    self._parsed = None
+    super(Profile, self).__setitem__(key, value)
+
+  def __delitem__(self, key):
+    self._parsed = None
+    super(Profile, self).__delitem__(key)
+
+  def clear(self):
+    self._parsed = None
+    super(Profile, self).clear()
+
+  def pop(self, key, default):
+    if key in self.keys():
+      self._parsed = None
+    super(Profile, self).pop(key, default)
+
+  def popitem(self):
+    self._parsed = None
+    super(Profile, self).popitem()
+
+  def setdefault(self, key, default):
+    if key in self.keys():
+      self._parsed = None
+    super(Profile, self).setdefault(key, default)
+
+  def update(self, other):
+    self._parsed = None
+    super(Profile, self).update(other)
 
   @property
   def name(self):
@@ -25,28 +56,28 @@ class Profile(dict):
 
   @name.setter
   def name(self, value):
-    assert isinstance(value, str)
+    assert isinstance(value, str) or value is None
     self._name = value
 
   @property
-  def is_valid(self):
-    if self._is_valid is None:
-      self.validate()
-    return self.is_valid
+  def parsed(self):
+    if self._parsed is None:
+      self.parse()
+    return self._parsed
 
   @abstractmethod
   def validate(self):
-    self._is_valid = True # Placeholder
+    pass
 
   @abstractmethod
   def parse(self):
-    pass
+    self._parse = dict(self) # Placeholder
 
 
 class NetascoreProfile(Profile):
 
-  def __init__(self, obj = None, name = None, validate = False):
-    super(NetascoreProfile, self).__init__(obj, name, validate)
+  def __init__(self, obj = None, name = None, validate = False, parse = False):
+    super(NetascoreProfile, self).__init__(obj, name, validate, parse)
 
   @classmethod
   def from_file(cls, file):
@@ -56,10 +87,10 @@ class NetascoreProfile(Profile):
 
   def validate(self):
     # TODO: Create workflow to validate profile.
-    self._is_valid = True
+    pass
 
   def parse(self):
-    out = copy.deepcopy(self._obj)
+    out = dict(self)
     # Parse weights.
     out["weights"] = {k:v for k, v in out["weights"].items() if v is not None}
     # TODO: Parse overrides.
@@ -67,7 +98,7 @@ class NetascoreProfile(Profile):
     raw = out["indicator_mapping"]
     parsed = {i["indicator"]:self.parse_indicator_mapping(i) for i in raw}
     out["indicator_mapping"] = parsed
-    return out
+    self._parsed = out
 
   @staticmethod
   def parse_indicator_mapping(obj):

@@ -44,13 +44,6 @@ class NetascoreAssessor(Assessor):
       self._profile = value
     else:
       raise ValueError(f"Unsupported profile type: '{type(value)}'")
-    self._parsed_profile = None
-
-  @property
-  def parsed_profile(self):
-    if self._parsed_profile is None:
-      self._parsed_profile = self.profile.parse()
-    return self._parsed_profile
 
   @property
   def naming_config(self):
@@ -100,7 +93,7 @@ class NetascoreAssessor(Assessor):
     sources = {}
     indices = {}
     config = {"read": read_attrs, "write": write_attrs, "return_data": True}
-    for i in self.parsed_profile["weights"]:
+    for i in self.profile.parsed["weights"]:
       src_meta = getattr(self, f"init_{i}")(network)
       directed = src_meta["directed"]
       idx_meta = self._init_metadata(i, kind = "index", directed = directed)
@@ -118,7 +111,7 @@ class NetascoreAssessor(Assessor):
         generate = True
       if generate:
         sources[i] = self._derive_from_network(src_meta, network, **config)
-        mapping = self.parsed_profile["indicator_mapping"][i]
+        mapping = self.profile.parsed["indicator_mapping"][i]
         if directed:
           idx_data = {"data": {}}
           for direction in ["forward", "backward"]:
@@ -481,7 +474,7 @@ class NetascoreAssessor(Assessor):
     return value
 
   def _index_edge(self, idx, direction, subindices, digits = 2):
-    weights = self.parsed_profile["weights"]
+    weights = self.profile.parsed["weights"]
     extractor = lambda obj: self._extract_value(obj, idx, direction)
     vals = [extractor(subindices[i]) * weights[i] for i in weights]
     return round(sum(vals) / sum(weights.values()), digits)
