@@ -64,7 +64,7 @@ class NetascoreAssessor(Assessor):
     return self.generate_index(network, **config)
 
   def generate_index(self, network, overwrite = True, overwrite_subs = True,
-                     overwrite_attrs = False, return_data = False):
+                     overwrite_attrs = True, return_data = False):
     metadata = self._init_metadata(kind = "index", directed = True)
     if not overwrite:
       try:
@@ -92,7 +92,7 @@ class NetascoreAssessor(Assessor):
     return metadata
 
   def generate_subindices(self, network, overwrite = True,
-                          overwrite_attrs = False, return_data = False):
+                          overwrite_attrs = True, return_data = False):
     sources = {}
     indices = {}
     config = {"overwrite": overwrite_attrs, "return_data": True}
