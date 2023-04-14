@@ -31,7 +31,7 @@ setup(
   url = "https://github.com/plus-mobilitylab/netapy",
   author = "Lucas van der Meer",
   author_email = "lucas.vandermeer@plus.ac.at",
-  description = "Assess infrastructure suitability for sustainable transport modes",
+  description = "Assess street network suitability for sustainable transport modes",
   long_description = README,
   long_description_content_type = "text/markdown",
   license = "MIT",
