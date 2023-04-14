@@ -63,9 +63,9 @@ class NetascoreAssessor(Assessor):
   def run(self, network, **config):
     return self.generate_index(network, **config)
 
-  def generate_index(self, network, read = False, write = True, read_subs = False,
-                     write_subs = True, read_attrs = False, write_attrs = True,
-                     return_data = False):
+  def generate_index(self, network, digits = 2, read = False, write = True,
+                     read_subs = False, write_subs = True, read_attrs = False,
+                     write_attrs = True, return_data = False):
     metadata = self._init_metadata(kind = "index", directed = True)
     if read:
       try:
@@ -86,7 +86,7 @@ class NetascoreAssessor(Assessor):
     subindices = self.generate_subindices(network, **config)
     edges = network.edges
     data = {"data": {}}
-    indexer = lambda e, d: self._index_edge(e, d, subindices = subindices)
+    indexer = lambda e, d: self._index_edge(e, d, subindices, digits)
     for direction in ["forward", "backward"]:
       data["data"][direction] = {e:indexer(e, direction) for e in edges}
     if write:
@@ -480,11 +480,11 @@ class NetascoreAssessor(Assessor):
       value = float("nan")
     return value
 
-  def _index_edge(self, idx, direction, subindices):
+  def _index_edge(self, idx, direction, subindices, digits = 2):
     weights = self.parsed_profile["weights"]
     extractor = lambda obj: self._extract_value(obj, idx, direction)
     vals = [extractor(subindices[i]) * weights[i] for i in weights]
-    return sum(vals) / sum(weights.values())
+    return round(sum(vals) / sum(weights.values()), digits)
 
   def _apply_indicator_mapping(self, value, mapping):
     rules = mapping["rules"]
