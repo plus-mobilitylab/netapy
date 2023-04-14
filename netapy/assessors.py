@@ -63,10 +63,11 @@ class NetascoreAssessor(Assessor):
   def run(self, network, **config):
     return self.generate_index(network, **config)
 
-  def generate_index(self, network, overwrite = True, overwrite_subs = True,
-                     overwrite_attrs = True, return_data = False):
+  def generate_index(self, network, read = False, write = True, read_subs = False,
+                     write_subs = True, read_attrs = False, write_attrs = True,
+                     return_data = False):
     metadata = self._init_metadata(kind = "index", directed = True)
-    if not overwrite:
+    if read:
       try:
         data = self._read_from_network(metadata, network)
       except NetapyNetworkError:
@@ -76,8 +77,10 @@ class NetascoreAssessor(Assessor):
           metadata.update(data)
         return metadata
     config = {
-      "overwrite": overwrite_subs,
-      "overwrite_attrs": overwrite_attrs,
+      "read": read_subs,
+      "write": write_subs,
+      "read_attrs": read_attrs,
+      "write_attrs": write_attrs,
       "return_data": True
     }
     subindices = self.generate_subindices(network, **config)
@@ -86,21 +89,22 @@ class NetascoreAssessor(Assessor):
     indexer = lambda e, d: self._index_edge(e, d, subindices = subindices)
     for direction in ["forward", "backward"]:
       data["data"][direction] = {e:indexer(e, direction) for e in edges}
-    self._write_to_network(data, metadata, network)
+    if write:
+      self._write_to_network(data, metadata, network)
     if return_data:
       metadata.update(data)
     return metadata
 
-  def generate_subindices(self, network, overwrite = True,
-                          overwrite_attrs = True, return_data = False):
+  def generate_subindices(self, network, read = False, write = True,
+                          read_attrs = False, write_attrs = True, return_data = False):
     sources = {}
     indices = {}
-    config = {"overwrite": overwrite_attrs, "return_data": True}
+    config = {"read": read_attrs, "write": write_attrs, "return_data": True}
     for i in self.parsed_profile["weights"]:
       src_meta = getattr(self, f"init_{i}")(network)
       directed = src_meta["directed"]
       idx_meta = self._init_metadata(i, kind = "index", directed = directed)
-      if not overwrite:
+      if read:
         try:
           idx_data = self._read_from_network(idx_meta, network)
         except NetapyNetworkError:
@@ -126,15 +130,17 @@ class NetascoreAssessor(Assessor):
           src = sources[i]["data"].items()
           idx = {k:self._apply_indicator_mapping(v, mapping) for k, v in src}
           idx_data["data"] = idx
-        self._write_to_network(idx_data, idx_meta, network)
+        if write:
+          self._write_to_network(idx_data, idx_meta, network)
         if return_data:
           idx_meta.update(idx_data)
         indices[i] = idx_meta
     return indices
 
-  def derive_attribute(self, label, network, overwrite = True, return_data = False):
+  def derive_attribute(self, label, network, read = False, write = True,
+                       return_data = False):
     metadata = getattr(self, f"init_{label}")(network)
-    return self._derive_from_network(metadata, network, overwrite, return_data)
+    return self._derive_from_network(metadata, network, read, write, return_data)
 
   def init_access_car(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
@@ -437,8 +443,9 @@ class NetascoreAssessor(Assessor):
     else:
       nx.set_edge_attributes(network, data["data"], metadata["name"])
 
-  def _derive_from_network(self, metadata, network, overwrite = True, return_data = False):
-    if not overwrite:
+  def _derive_from_network(self, metadata, network, read = False, write = True,
+                           return_data = False):
+    if read:
       try:
         data = self._read_from_network(metadata, network)
       except NetapyNetworkError:
@@ -454,7 +461,8 @@ class NetascoreAssessor(Assessor):
     else:
       data = {}
       data["data"] = metadata["deriver"](network)
-    self._write_to_network(data, metadata, network)
+    if write:
+      self._write_to_network(data, metadata, network)
     if return_data:
       metadata.update(data)
     return metadata
