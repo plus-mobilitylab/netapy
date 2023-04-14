@@ -400,7 +400,7 @@ class NetascoreAssessor(Assessor):
     else:
       dpre = self.naming_config[f"{direction}_prefix"]
       dsuf = self.naming_config[f"{direction}_suffix"]
-    return f"{dpre}{pre}{self.profile.name}{label}{suf}{dsuf}"
+    return f"{dpre}{pre}{self.profile.name}{suf}{label}{dsuf}"
 
   def _construct_attribute_colname(self, label, direction = None):
     pre = self.naming_config["attribute_prefix"]
