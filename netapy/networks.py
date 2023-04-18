@@ -188,4 +188,10 @@ class NetascoreNetwork(Network):
       print(out)
     if not inplace:
       return network
+
+  def clean(self, assessor, inplace = True, **config):
+    network = self if inplace else copy.deepcopy(self)
+    assessor.clean(network, **config)
+    if not inplace:
+      return network
       

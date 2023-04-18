@@ -56,6 +56,10 @@ class NetascoreAssessor(Assessor):
   def run(self, network, **config):
     return self.generate_index(network, **config)
 
+  def clean(self, network, **config):
+    # TODO: Create workflow to remove all netascore columns from network.
+    raise NotImplementedError()
+
   def generate_index(self, network, digits = 2, read = False, write = True,
                      read_subs = False, write_subs = True, read_attrs = False,
                      write_attrs = True, return_data = False):
