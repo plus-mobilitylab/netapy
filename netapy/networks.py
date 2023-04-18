@@ -1,11 +1,13 @@
 import osmnx as ox
 import copy
+import logging
 
 from abc import abstractmethod
 from networkx import MultiDiGraph
 
 from netapy import defaults
 
+logger = logging.getLogger(__name__)
 
 class Network(MultiDiGraph):
 
@@ -181,11 +183,13 @@ class NetascoreNetwork(Network):
     # TODO: Create workflow to add noise and other additional data from files.
     raise NotImplementedError()
 
-  def assess(self, assessor, inplace = True, print_output = False, **config):
+  def assess(self, assessor, inplace = True, **config):
     network = self if inplace else copy.deepcopy(self)
-    out = assessor.run(network, **config)
-    if print_output:
-      print(out)
+    metadata = assessor.run(network, **config)
+    if config.get("write", default = True):
+      name_fw = metadata["name"]["forward"]
+      name_bw = metadata["name"]["backward"]
+      logger.info(f"Wrote index to columns '{name_fw}' and '{name_bw}'")
     if not inplace:
       return network
 

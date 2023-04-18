@@ -1,5 +1,5 @@
 import networkx as nx
-import copy
+import logging
 import random
 
 from abc import abstractmethod
@@ -7,6 +7,8 @@ from abc import abstractmethod
 from netapy import defaults
 from netapy.profiles import NetascoreProfile
 from netapy.exceptions import NetapyNetworkError
+
+logger = logging.getLogger(__name__)
 
 
 class Assessor():
