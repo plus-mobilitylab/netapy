@@ -29,6 +29,8 @@ class NetascoreAssessor(Assessor):
       self.naming_config = defaults.NETASCORE_NAMING_CONFIG
     else:
       self.naming_config = naming_config
+    self._subindex_cache = {}
+    self._attribute_cache = {}
 
   @property
   def profile(self):
@@ -82,26 +84,26 @@ class NetascoreAssessor(Assessor):
       "write_attrs": write_attrs,
       "return_data": True
     }
-    subindices = self.generate_subindices(network, **config)
+    self._subindex_cache = self.generate_subindices(network, **config)
     edges = network.edges
     data = {"data": {}}
-    indexer = lambda e, d: self._index_edge(e, d, subindices, digits)
+    indexer = lambda e, d: self._index_edge(e, d, digits)
     for direction in ["forward", "backward"]:
       data["data"][direction] = {e:indexer(e, direction) for e in edges}
     if write:
       self._write_to_network(data, metadata, network)
     if return_data:
       metadata.update(data)
+    self._subindex_cache.clear()
     return metadata
 
   def generate_subindices(self, network, read = False, write = True,
                           read_attrs = False, write_attrs = True, return_data = False):
-    sources = {}
-    indices = {}
+    out = {}
     config = {"read": read_attrs, "write": write_attrs, "return_data": True}
     for i in self.profile.parsed["weights"]:
-      src_meta = getattr(self, f"init_{i}")(network)
-      directed = src_meta["directed"]
+      attr_meta = getattr(self, f"init_{i}")(network)
+      directed = attr_meta["directed"]
       idx_meta = self._init_metadata(i, kind = "index", directed = directed)
       if read:
         try:
@@ -111,30 +113,35 @@ class NetascoreAssessor(Assessor):
         else:
           if return_data:
             idx_meta.update(idx_data)
-          indices[i] = idx_meta
+          out[i] = idx_meta
           generate = False
       else:
         generate = True
       if generate:
-        sources[i] = self._derive_from_network(src_meta, network, **config)
+        try:
+          attr = self._attribute_cache[i]
+        except KeyError:
+          attr = self._derive_from_network(attr_meta, network, **config)
+          self._attribute_cache[i] = attr
         mapping = self.profile.parsed["indicator_mapping"][i]
         if directed:
           idx_data = {"data": {}}
           for direction in ["forward", "backward"]:
-            src = sources[i]["data"][direction].items()
-            idx = {k:self._apply_indicator_mapping(v, mapping) for k, v in src}
-            idx_data["data"][direction] = idx
+            vals = attr["data"][direction].items()
+            idxs = {k:self._apply_indicator_mapping(v, mapping) for k, v in vals}
+            idx_data["data"][direction] = idxs
         else:
           idx_data = {}
-          src = sources[i]["data"].items()
-          idx = {k:self._apply_indicator_mapping(v, mapping) for k, v in src}
-          idx_data["data"] = idx
+          vals = attr["data"].items()
+          idxs = {k:self._apply_indicator_mapping(v, mapping) for k, v in vals}
+          idx_data["data"] = idxs
         if write:
           self._write_to_network(idx_data, idx_meta, network)
         if return_data:
           idx_meta.update(idx_data)
-        indices[i] = idx_meta
-    return indices
+        out[i] = idx_meta
+    self._attribute_cache.clear()
+    return out
 
   def derive_attribute(self, label, network, read = False, write = True,
                        return_data = False):
@@ -479,10 +486,10 @@ class NetascoreAssessor(Assessor):
       value = float("nan")
     return value
 
-  def _index_edge(self, idx, direction, subindices, digits = 2):
+  def _index_edge(self, idx, direction, digits = 2):
     weights = self.profile.parsed["weights"]
     extractor = lambda obj: self._extract_value(obj, idx, direction)
-    vals = [extractor(subindices[i]) * weights[i] for i in weights]
+    vals = [extractor(self._subindex_cache[i]) * weights[i] for i in weights]
     return round(sum(vals) / sum(weights.values()), digits)
 
   def _apply_indicator_mapping(self, value, mapping):
