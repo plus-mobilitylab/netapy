@@ -186,7 +186,7 @@ class NetascoreNetwork(Network):
   def assess(self, assessor, inplace = True, **config):
     network = self if inplace else copy.deepcopy(self)
     metadata = assessor.run(network, **config)
-    if config.get("write", default = True):
+    if config.get("write", True):
       name_fw = metadata["name"]["forward"]
       name_bw = metadata["name"]["backward"]
       logger.info(f"Wrote index to columns '{name_fw}' and '{name_bw}'")
