@@ -100,48 +100,82 @@ class NetascoreAssessor(Assessor):
   def generate_subindices(self, network, read = False, write = True,
                           read_attrs = False, write_attrs = True, return_data = False):
     out = {}
-    config = {"read": read_attrs, "write": write_attrs, "return_data": True}
+    config = {
+      "read": read,
+      "write": write,
+      "read_attrs": read_attrs,
+      "write_attrs": write_attrs,
+      "return_data": return_data,
+      "clear_cache": False
+    }
+    self._attribute_cache.clear()
     for i in self.profile.parsed["weights"]:
-      attr_meta = getattr(self, f"init_{i}")(network)
-      directed = attr_meta["directed"]
-      idx_meta = self._init_metadata(i, kind = "index", directed = directed)
-      if read:
-        try:
-          idx_data = self._read_from_network(idx_meta, network)
-        except NetapyNetworkError:
-          generate = True
-        else:
-          if return_data:
-            idx_meta.update(idx_data)
-          out[i] = idx_meta
-          generate = False
-      else:
-        generate = True
-      if generate:
-        try:
-          attr = self._attribute_cache[i]
-        except KeyError:
-          attr = self._derive_from_network(attr_meta, network, **config)
-          self._attribute_cache[i] = attr
-        mapping = self.profile.parsed["indicator_mapping"][i]
-        if directed:
-          idx_data = {"data": {}}
-          for direction in ["forward", "backward"]:
-            vals = attr["data"][direction].items()
-            idxs = {k:self._apply_indicator_mapping(v, mapping) for k, v in vals}
-            idx_data["data"][direction] = idxs
-        else:
-          idx_data = {}
-          vals = attr["data"].items()
-          idxs = {k:self._apply_indicator_mapping(v, mapping) for k, v in vals}
-          idx_data["data"] = idxs
-        if write:
-          self._write_to_network(idx_data, idx_meta, network)
-        if return_data:
-          idx_meta.update(idx_data)
-        out[i] = idx_meta
+      out[i] = self.generate_subindex(i, network, **config)
     self._attribute_cache.clear()
     return out
+
+  def generate_subindex(self, label, network, read = False, write = True,
+                        read_attrs = False, write_attrs = True,
+                        return_data = False, clear_cache = True):
+    attr_meta = getattr(self, f"init_{label}")(network)
+    directed = attr_meta["directed"]
+    idx_meta = self._init_metadata(label, kind = "index", directed = directed)
+    config = {"read": read_attrs, "write": write_attrs, "return_data": True}
+    # Read index values from the network if read = True and the index exists.
+    if read:
+      try:
+        idx_data = self._read_from_network(idx_meta, network)
+      except NetapyNetworkError:
+        generate = True
+      else:
+        if return_data:
+          idx_meta.update(idx_data)
+        generate = False
+    else:
+      generate = True
+    # Otherwise generate the index values.
+    if generate:
+      # Fetch the values of the attribute belonging to the subindex.
+      try:
+        attr = self._attribute_cache[label]
+      except KeyError:
+        attr = self._derive_from_network(attr_meta, network, **config)
+        self._attribute_cache[label] = attr
+      # Fetch the mapping that maps the attribute values to the index values.
+      mapping = self.profile.parsed["indicator_mapping"][label]
+      # It may be that the mapping also references other attributes.
+      # In that case we need to fetch those attribute values as well.
+      other_labels = []
+      def _find_attrs(obj):
+        for assignment in obj["rules"].values():
+          if isinstance(assignment, dict):
+            other_labels.append(assignment["indicator"])
+            _find_attrs(assignment)
+      _find_attrs(mapping)
+      for x in other_labels:
+        if x not in self._attribute_cache:
+          other_attr_meta = getattr(self, f"init_{x}")(network)
+          other_attr = self._derive_from_network(other_attr_meta, network, **config)
+          self._attribute_cache[x] = other_attr
+      # Generate the subindex values for each edge.
+      indexer = lambda e, d: self._subindex_edge(e, label, mapping, d)
+      if directed:
+        idx_data = {"data": {}}
+        for direction in ["forward", "backward"]:
+          idxs = {e:indexer(e, direction) for e in attr["data"][direction]}
+          idx_data["data"][direction] = idxs
+      else:
+        idx_data = {}
+        idxs = {e:indexer(e, None) for e in attr["data"]}
+        idx_data["data"] = idxs
+      # Post-process.
+      if write:
+        self._write_to_network(idx_data, idx_meta, network)
+      if return_data:
+        idx_meta.update(idx_data)
+      if clear_cache:
+        self._attribute_cache.clear()
+    return idx_meta
 
   def derive_attribute(self, label, network, read = False, write = True,
                        return_data = False):
@@ -473,7 +507,7 @@ class NetascoreAssessor(Assessor):
       metadata.update(data)
     return metadata
 
-  def _extract_value(self, obj, edge_idx, direction):
+  def _extract_value(self, obj, edge_idx, direction = None):
     if obj["directed"]:
       data = obj["data"][direction]
     else:
@@ -492,10 +526,22 @@ class NetascoreAssessor(Assessor):
     vals = [extractor(self._subindex_cache[i]) * weights[i] for i in weights]
     return round(sum(vals) / sum(weights.values()), digits)
 
+  def _subindex_edge(self, idx, label, mapping, direction = None):
+    value = self._extract_value(self._attribute_cache[label], idx, direction)
+    for condition, assignment in mapping["rules"].items():
+      if condition(value):
+        if isinstance(assignment, dict):
+          # TODO: What if subindex is directed but attribute not (or vice versa)?
+          label = assignment["indicator"]
+          value = self._extract_value(self._attribute_cache[label], idx, direction)
+          return self._apply_indicator_mapping(value, assignment)
+        else:
+          return assignment
+    return mapping["default"]
+
   def _apply_indicator_mapping(self, value, mapping):
     rules = mapping["rules"]
     for condition, assignment in rules.items():
       if condition(value):
-        # TODO: Handle assignments that are nested indicator mappings.
         return assignment
     return mapping["default"]

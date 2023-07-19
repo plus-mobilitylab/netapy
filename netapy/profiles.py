@@ -105,16 +105,6 @@ class NetascoreProfile(Profile):
     raw = copy.deepcopy(obj)
     # Parse name.
     name = raw.pop("indicator")
-    # Validate.
-    if len(raw) != 1:
-      if len(raw) > 1:
-        raise NetapyProfileError(
-          f"Multiple mappings are defined for indicator '{name}'"
-        )
-      else:
-        raise NetapyProfileError(
-          f"No mapping is defined for indicator '{name}'"
-        )
     # Parse type.
     maptype = list(raw.keys())[0]
     raw = raw[maptype]
@@ -174,5 +164,6 @@ class NetascoreProfile(Profile):
       return obj
     if isinstance(obj, str):
       return utils.clean_string(obj)
-    # TODO: Parse assignments that are nested indicator mappings.
+    if isinstance(obj, dict):
+      return NetascoreProfile.parse_indicator_mapping(obj)
     raise NetapyProfileError(f"Unsupported assignment value: {obj}")
