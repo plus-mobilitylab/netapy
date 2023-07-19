@@ -1,4 +1,5 @@
 import networkx as nx
+import inspect
 import logging
 import random
 
@@ -68,6 +69,7 @@ class NetascoreAssessor(Assessor):
                      read_subs = False, write_subs = True, read_attrs = False,
                      write_attrs = True, return_data = False):
     metadata = self._init_metadata(kind = "index", directed = True)
+    # Read values from the network if read = True and the index exists.
     if read:
       try:
         data = self._read_from_network(metadata, network)
@@ -77,6 +79,7 @@ class NetascoreAssessor(Assessor):
         if return_data:
           metadata.update(data)
         return metadata
+    # Otherwise derive the indices by taking a weighted average of subindices.
     config = {
       "read": read_subs,
       "write": write_subs,
@@ -90,6 +93,7 @@ class NetascoreAssessor(Assessor):
     indexer = lambda e, d: self._index_edge(e, d, digits)
     for direction in ["forward", "backward"]:
       data["data"][direction] = {e:indexer(e, direction) for e in edges}
+    # Post-process.
     if write:
       self._write_to_network(data, metadata, network)
     if return_data:
@@ -117,310 +121,242 @@ class NetascoreAssessor(Assessor):
   def generate_subindex(self, label, network, read = False, write = True,
                         read_attrs = False, write_attrs = True,
                         return_data = False, clear_cache = True):
-    attr_meta = getattr(self, f"init_{label}")(network)
-    directed = attr_meta["directed"]
-    idx_meta = self._init_metadata(label, kind = "index", directed = directed)
-    config = {"read": read_attrs, "write": write_attrs, "return_data": True}
-    # Read index values from the network if read = True and the index exists.
+    directed = self._is_directed_attribute(label)
+    metadata = self._init_metadata(label, kind = "index", directed = directed)
+    # Read values from the network if read = True and the index exists.
     if read:
       try:
-        idx_data = self._read_from_network(idx_meta, network)
+        data = self._read_from_network(metadata, network)
       except NetapyNetworkError:
-        generate = True
+        pass
       else:
         if return_data:
-          idx_meta.update(idx_data)
-        generate = False
+          metadata.update(data)
+        return metadata
+    # Otherwise derive the indices by mapping its corresponding attribute values.
+    # Fetch the values of the attribute belonging to the subindex.
+    config = {"read": read_attrs, "write": write_attrs, "return_data": True}
+    try:
+      attr = self._attribute_cache[label]
+    except KeyError:
+      attr = self.generate_attribute(label, network, **config)
+      self._attribute_cache[label] = attr
+    # Fetch the mapping that maps the attribute values to the index values.
+    mapping = self.profile.parsed["indicator_mapping"][label]
+    # It may be that the mapping also references other attributes.
+    # In that case we need to fetch those attribute values as well.
+    other_labels = []
+    def _find_attrs(obj):
+      for assignment in obj["rules"].values():
+        if isinstance(assignment, dict):
+          other_labels.append(assignment["indicator"])
+          _find_attrs(assignment)
+    _find_attrs(mapping)
+    for x in other_labels:
+      if x not in self._attribute_cache:
+        other_attr = self.generate_attribute(x, network, **config)
+        self._attribute_cache[x] = other_attr
+    # Generate the subindex values for each edge.
+    indexer = lambda e, d: self._subindex_edge(e, label, mapping, d)
+    if directed:
+      data = {"data": {}}
+      for direction in ["forward", "backward"]:
+        idxs = {e:indexer(e, direction) for e in attr["data"][direction]}
+        data["data"][direction] = idxs
     else:
-      generate = True
-    # Otherwise generate the index values.
-    if generate:
-      # Fetch the values of the attribute belonging to the subindex.
+      data = {}
+      idxs = {e:indexer(e, None) for e in attr["data"]}
+      data["data"] = idxs
+    # Post-process.
+    if write:
+      self._write_to_network(data, metadata, network)
+    if return_data:
+      metadata.update(data)
+    if clear_cache:
+      self._attribute_cache.clear()
+    return metadata
+
+  def generate_attribute(self, label, network, read = False, write = True,
+                         return_data = False):
+    directed = self._is_directed_attribute(label)
+    metadata = self._init_metadata(label, kind = "attribute", directed = directed)
+    # Read values from the network if read = True and the attribute exists.
+    if read:
       try:
-        attr = self._attribute_cache[label]
-      except KeyError:
-        attr = self._derive_from_network(attr_meta, network, **config)
-        self._attribute_cache[label] = attr
-      # Fetch the mapping that maps the attribute values to the index values.
-      mapping = self.profile.parsed["indicator_mapping"][label]
-      # It may be that the mapping also references other attributes.
-      # In that case we need to fetch those attribute values as well.
-      other_labels = []
-      def _find_attrs(obj):
-        for assignment in obj["rules"].values():
-          if isinstance(assignment, dict):
-            other_labels.append(assignment["indicator"])
-            _find_attrs(assignment)
-      _find_attrs(mapping)
-      for x in other_labels:
-        if x not in self._attribute_cache:
-          other_attr_meta = getattr(self, f"init_{x}")(network)
-          other_attr = self._derive_from_network(other_attr_meta, network, **config)
-          self._attribute_cache[x] = other_attr
-      # Generate the subindex values for each edge.
-      indexer = lambda e, d: self._subindex_edge(e, label, mapping, d)
-      if directed:
-        idx_data = {"data": {}}
-        for direction in ["forward", "backward"]:
-          idxs = {e:indexer(e, direction) for e in attr["data"][direction]}
-          idx_data["data"][direction] = idxs
+        data = self._read_from_network(metadata, network)
+      except NetapyNetworkError:
+        pass
       else:
-        idx_data = {}
-        idxs = {e:indexer(e, None) for e in attr["data"]}
-        idx_data["data"] = idxs
-      # Post-process.
-      if write:
-        self._write_to_network(idx_data, idx_meta, network)
-      if return_data:
-        idx_meta.update(idx_data)
-      if clear_cache:
-        self._attribute_cache.clear()
-    return idx_meta
+        if return_data:
+          metadata.update(data)
+        return metadata
+    # Otherwise derive the attribute values from the network data.
+    deriver = getattr(self, f"derive_{label}")
+    if metadata["directed"]:
+      data = {"data": {}}
+      for direction in ["forward", "backward"]:
+        data["data"][direction] = deriver(network, direction)
+    else:
+      data = {}
+      data["data"] = deriver(network)
+    # Post-process.
+    if write:
+      self._write_to_network(data, metadata, network)
+    if return_data:
+      metadata.update(data)
+    return metadata
 
-  def derive_attribute(self, label, network, read = False, write = True,
-                       return_data = False):
-    metadata = getattr(self, f"init_{label}")(network)
-    return self._derive_from_network(metadata, network, read, write, return_data)
-
-  def init_access_car(self, network):
+  def derive_access_car(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = [True, True, True, True, False]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("access_car", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = [True, True, True, True, False]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_access_bicycle(self, network):
+  def derive_access_bicycle(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = [True, True, True, True, False]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("access_bicycle", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = [True, True, True, True, False]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_access_pedestrian(self, network):
+  def derive_access_pedestrian(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = [True, True, True, True, False]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("access_pedestrian", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = [True, True, True, True, False]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_bridge(self, network):
+  def derive_bridge(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      vals = [False] * len(keys)
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("bridge", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    vals = [False] * len(keys)
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_tunnel(self, network):
+  def derive_tunnel(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      vals = [False] * len(keys)
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("tunnel", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    vals = [False] * len(keys)
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_bicycle_infrastructure(self, network):
+  def derive_bicycle_infrastructure(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = ["bicycle_way", "mixed_way", "bicycle_lane", "bus_lane", "no"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("bicycle_infrastructure", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["bicycle_way", "mixed_way", "bicycle_lane", "bus_lane", "no"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_pedestrian_infrastructure(self, network):
+  def derive_pedestrian_infrastructure(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = ["pedestrian_area", "pedestrian_way", "mixed_way", "stairs", "sidewalk", "no"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("pedestrian_infrastructure", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["pedestrian_area", "pedestrian_way", "mixed_way", "stairs", "sidewalk", "no"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_gradient(self, network):
+  def derive_gradient(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = [-4, -3, -2, -1, 0, 1, 2, 3, 4]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("gradient", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = [-4, -3, -2, -1, 0, 1, 2, 3, 4]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_max_speed(self, network):
+  def derive_max_speed(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = range(0, 130)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("max_speed", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 130)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_max_speed_greatest(self, network):
+  def derive_max_speed_greatest(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 130)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("max_speed_greatest", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 130)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_road_category(self, network):
+  def derive_road_category(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = ["primary", "secondary", "residential", "service", "calmed", "no_mit", "path"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("road_category", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["primary", "secondary", "residential", "service", "calmed", "no_mit", "path"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_designated_route(self, network):
+  def derive_designated_route(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = ["local", "regional", "national", "international", "unknown", "no"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("designated_route", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["local", "regional", "national", "international", "unknown", "no"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_number_lanes(self, network):
+  def derive_number_lanes(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = range(0, 10)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("number_lanes", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 10)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_width(self, network):
+  def derive_width(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 10)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("width", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 10)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_pavement(self, network):
+  def derive_pavement(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = ["asphalt", "gravel", "cobble", "soft"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("pavement", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["asphalt", "gravel", "cobble", "soft"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_parking(self, network):
+  def derive_parking(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network, direction):
-      keys = network.edges
-      pool = ["yes", "no"]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("parking", kind = "attribute", directed = True)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = ["yes", "no"]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_crossings(self, network):
+  def derive_crossings(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 10)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("crossings", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 10)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_buildings(self, network):
+  def derive_buildings(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 100)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("buildings", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 100)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_facilities(self, network):
+  def derive_facilities(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 10)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("facilities", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 10)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_greenness(self, network):
+  def derive_greenness(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 100)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("greenness", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 100)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_water(self, network):
+  def derive_water(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = [True, False]
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("water", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = [True, False]
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
-  def init_noise(self, network):
+  def derive_noise(self, network):
     # TODO: Implement deriver function (below is just a placeholder)
-    def deriver(network):
-      keys = network.edges
-      pool = range(0, 100)
-      vals = random.choices(pool, k = len(keys))
-      return {k:v for k, v in zip(keys, vals)}
-    meta = self._init_metadata("noise", kind = "attribute", directed = False)
-    meta["deriver"] = deriver
-    return meta
+    keys = network.edges
+    pool = range(0, 100)
+    vals = random.choices(pool, k = len(keys))
+    return {k:v for k, v in zip(keys, vals)}
 
   def _init_metadata(self, label = None, kind = "attribute", directed = False):
     if directed:
@@ -483,30 +419,6 @@ class NetascoreAssessor(Assessor):
     else:
       nx.set_edge_attributes(network, data["data"], metadata["name"])
 
-  def _derive_from_network(self, metadata, network, read = False, write = True,
-                           return_data = False):
-    if read:
-      try:
-        data = self._read_from_network(metadata, network)
-      except NetapyNetworkError:
-        pass
-      else:
-        if return_data:
-          metadata.update(data)
-        return metadata
-    if metadata["directed"]:
-      data = {"data": {}}
-      for direction in ["forward", "backward"]:
-        data["data"][direction] = metadata["deriver"](network, direction)
-    else:
-      data = {}
-      data["data"] = metadata["deriver"](network)
-    if write:
-      self._write_to_network(data, metadata, network)
-    if return_data:
-      metadata.update(data)
-    return metadata
-
   def _extract_value(self, obj, edge_idx, direction = None):
     if obj["directed"]:
       data = obj["data"][direction]
@@ -539,9 +451,6 @@ class NetascoreAssessor(Assessor):
           return assignment
     return mapping["default"]
 
-  def _apply_indicator_mapping(self, value, mapping):
-    rules = mapping["rules"]
-    for condition, assignment in rules.items():
-      if condition(value):
-        return assignment
-    return mapping["default"]
+  def _is_directed_attribute(self, label):
+    deriver = getattr(self, f"derive_{label}")
+    return "direction" in inspect.getfullargspec(deriver)[0]
