@@ -1,3 +1,4 @@
+import pandas as pd
 import osmnx as ox
 import copy
 import logging
@@ -198,4 +199,15 @@ class NetascoreNetwork(Network):
     assessor.clean(network, **config)
     if not inplace:
       return network
+
+  def _get_edge_attributes(self, *attrs):
+    if self.is_multigraph():
+      E = self.edges(keys = True, data = True)
+    else:
+      E = self.edges(data = True)
+    # Subset edge data to contain only the specified attributes.
+    E = [[e[:-1], {k:e[-1][k] for k in set(attrs) & set(e[-1].keys())}] for e in E]
+    keys, data = zip(*E)
+    out = pd.DataFrame(data, index = keys)
+    return out.reindex(columns = attrs)
       

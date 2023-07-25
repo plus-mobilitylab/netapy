@@ -1,3 +1,4 @@
 osmnx
 networkx
+pandas
 pyyaml
