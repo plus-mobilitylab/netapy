@@ -128,15 +128,20 @@ class NetascoreProfile(Profile):
 
   @staticmethod
   def parse_set_membership(obj):
-    # TODO: Parse keys that are None or nan or "NULL".
     if isinstance(obj, float) or isinstance(obj, int) or isinstance(obj, bool):
       members = [obj]
+      has_null = False
     else:
       obj = str(obj)
       if obj.startswith("{") and obj.endswith("}"):
         members = [utils.clean_string(x) for x in obj[1:-1].split(",")]
       else:
         members = [utils.clean_string(obj)]
+      members_upper = [x.upper() for x in members]
+      if any([x in members_upper for x in ["NONE", "NAN", "NULL"]]):
+        has_null = True
+      else:
+        has_null = False
       try:
         members = [utils.string_to_numeric(x) for x in members]
       except ValueError:
@@ -144,7 +149,10 @@ class NetascoreProfile(Profile):
           members = [utils.string_to_boolean(x) for x in members]
         except ValueError:
           pass
-    return lambda x: x in members
+    if has_null:
+      return lambda x: x in members or pd.isnull(x)
+    else:
+      return lambda x: x in members
 
   @staticmethod
   def parse_condition(obj):

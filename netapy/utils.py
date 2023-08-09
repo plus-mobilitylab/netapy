@@ -1,3 +1,4 @@
+import pandas as pd
 import operator
 import re
 
@@ -8,7 +9,10 @@ def clean_string(obj, keep = "[^a-zA-Z0-9_.:\-]", strip = True):
   else:
     return substr
 
-def split_string(obj):
+def split_string(obj, split_nodata = False):
+  if split_nodata:
+    if pd.isnull(obj):
+      return None, float("nan")
   char = re.sub("[^a-zA-Z]", "", obj)
   if char == "":
     char = None
@@ -52,7 +56,7 @@ def string_to_numeric(obj, fail = True):
     except ValueError:
       if fail:
         raise ValueError(f"Could not convert string to numeric: {obj}")
-      return None
+      return float("nan")
 
 def string_to_boolean(obj, fail = True):
   if obj in ["True", "true", "1", "1.0"]:

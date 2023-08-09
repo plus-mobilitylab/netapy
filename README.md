@@ -2,7 +2,7 @@
 
 The netapy package is a pure-python implementation of the [NetAScore Toolbox](https://github.com/plus-mobilitylab/netascore), developed by the University of Salzburg. It is coded in such a way that it should make it easy to adapt or extend the default workflow, and to add other approaches to street network suitability assessment for sustainable transport modes as well.
 
-This version of netapy is still work in progress, and does not yet implement all parts of the netascore workflow. Currently it is lacking 1) derivation of some of the relevant attributes from OpenStreetMap data (they are assigned randomly instead), 2) the ability to parse overrides defintions of mode profiles, and 3) the ability to add non-OpenStreetMap attributes to the network (such as noise).
+This version of netapy is still work in progress, and does not yet implement all parts of the netascore workflow. Currently it is lacking 1) derivation of some of the relevant attributes from OpenStreetMap data (they are either randomly created or the derivation is simplified), and 2) the ability to parse overrides defintions of mode profiles.
 
 ## Installation
 
