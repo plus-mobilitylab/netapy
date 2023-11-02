@@ -51,6 +51,7 @@ setup(
     "Topic :: Scientific/Engineering :: GIS",
     "Topic :: Software Development :: Libraries :: Python Modules"
   ],
+  packages = ["netapy"],
   platforms = "any",
   install_requires = requirements
 )
